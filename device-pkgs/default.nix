@@ -134,11 +134,36 @@ let
     meta.platforms = [ "x86_64-linux" ];
   };
 
+  # Boots the MB2 applet over RCM and has it coldboot the device out of recovery mode.
+  coldbootScript = writeShellApplication {
+    name = "coldboot-${cfg.name}";
+    text = import ./flash-script.nix {
+      inherit lib l4tAtLeast;
+      inherit (nvidia-jetpack) flash-tools socFamily;
+      flashCommands = ''
+        ./flash.sh --no-flash --read-info "$@" ${toString cfg.flashScriptOverrides.flashArgs}
+        cd bootloader
+        sed -n '/^\.\/tegraflash\.py/{s/; *reboot recovery//;p}' readinfocmd.txt > applet.sh
+        bash ./applet.sh
+        ./tegrarcm_v2 --chip ${chipId} 0 --reboot coldboot
+      '';
+      dtbsDir = config.hardware.deviceTree.package;
+    };
+    meta.platforms = [ "x86_64-linux" ];
+  };
+
   # TODO: The flash script should not have the kernel output in its runtime closure
   initrdFlashScript =
     writeShellApplication {
       name = "initrd-flash-${cfg.name}";
-      text = import ./initrdflash-script.nix { inherit mkRcmBootScript config flashInitrd lib l4tMajorMinorPatchVersion writeText deviceTree tio expect; };
+      text = import ./initrdflash-script.nix { inherit mkRcmBootScript config flashInitrd lib l4tMajorMinorPatchVersion writeText deviceTree tio expect; } + lib.optionalString (chipId == "0x26") ''
+        # A Thor put in recovery at power-on returns to recovery on the flash kernel's warm reboot.
+        sleep 20
+        if lsusb -d 0955:7026 >/dev/null; then
+          echo "Device came back in recovery mode; coldbooting it"
+          ${lib.getExe coldbootScript} "$@"
+        fi
+      '';
       meta.platforms = [ "x86_64-linux" ];
     };
 
@@ -234,7 +259,7 @@ let
     '';
 in
 {
-  inherit initrdFlashScript legacyFlashScript fuseScript rcmBoot pkcListComboHash;
+  inherit initrdFlashScript legacyFlashScript fuseScript coldbootScript rcmBoot pkcListComboHash;
   flashScript = initrdFlashScript;
 }
   // (lib.optionalAttrs cfg.firmware.fskp.enable { inherit fskpFuseScript; })
