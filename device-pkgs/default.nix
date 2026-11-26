@@ -145,11 +145,20 @@ let
       inherit lib l4tAtLeast;
       inherit (nvidia-jetpack) flash-tools socFamily;
       flashCommands = ''
-        ./flash.sh --no-flash --read-info "$@" ${toString cfg.flashScriptOverrides.flashArgs}
+        instance=()
+        args=("$@")
+        for ((i = 0; i < ''${#args[@]}; i++)); do
+          if [[ ''${args[i]} == --usb-instance ]]; then
+            instance=(--instance "''${args[i + 1]}")
+          fi
+        done
+        # With --usb-instance, flash.sh fails parsing chip_info.bin after saving readinfocmd.txt.
+        ./flash.sh --no-flash --read-info "$@" ${toString cfg.flashScriptOverrides.flashArgs} \
+          || [[ -e bootloader/readinfocmd.txt ]]
         cd bootloader
         sed -n '/^\.\/tegraflash\.py/{s/; *reboot recovery//;p}' readinfocmd.txt > applet.sh
         bash ./applet.sh
-        ./tegrarcm_v2 --chip ${chipId} 0 --reboot coldboot
+        ./tegrarcm_v2 "''${instance[@]}" --chip ${chipId} 0 --reboot coldboot
       '';
       dtbsDir = config.hardware.deviceTree.package;
     };
